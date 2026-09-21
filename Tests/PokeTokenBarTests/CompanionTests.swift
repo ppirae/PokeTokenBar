@@ -1,3 +1,4 @@
+#if os(macOS)   // macOS-only: exercises AppKit/SwiftUI/companion/store types
 import XCTest
 import Observation
 @testable import PokeTokenBar
@@ -1861,3 +1862,4 @@ final class PokeAPIGuardTests: XCTestCase {
         XCTAssertNil(PokeAPIClient.validatedChainURL(""), "빈 문자열 거부")
     }
 }
+#endif

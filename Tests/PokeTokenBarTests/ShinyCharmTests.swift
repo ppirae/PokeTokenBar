@@ -1,3 +1,4 @@
+#if os(macOS)   // macOS-only: exercises AppKit/SwiftUI/companion/store types
 import XCTest
 @testable import PokeTokenBar
 
@@ -129,3 +130,4 @@ final class SpriteShinyReloadTests: XCTestCase {
                       "미로드(캐시 미스) 상태에서는 항상 불러온다")
     }
 }
+#endif

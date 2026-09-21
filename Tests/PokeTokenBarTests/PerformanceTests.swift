@@ -1,3 +1,4 @@
+#if os(macOS)   // macOS-only: exercises AppKit/SwiftUI/companion/store types
 import XCTest
 @testable import PokeTokenBar
 
@@ -501,3 +502,4 @@ final class FloatingPetEnergyTests: XCTestCase {
         return text
     }
 }
+#endif

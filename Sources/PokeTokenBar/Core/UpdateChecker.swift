@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Observation
 
@@ -143,3 +144,4 @@ final class UpdateChecker {
         try? task.run()
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import ImageIO
 import UniformTypeIdentifiers
@@ -62,3 +63,4 @@ enum GIFDecoder {
         return d < 0.02 ? 0.1 : d
     }
 }
+#endif

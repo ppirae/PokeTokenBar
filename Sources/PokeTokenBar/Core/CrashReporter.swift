@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Foundation
 
@@ -98,3 +99,4 @@ enum CrashReporter {
         raise(received)             // 재발생 → macOS .ips 크래시 리포트 생성
     }
 }
+#endif

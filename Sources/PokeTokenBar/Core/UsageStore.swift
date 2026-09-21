@@ -1,12 +1,10 @@
+#if os(macOS)
 import AppKit
 import Foundation
 import Observation
 import UserNotifications
 
-/// burn rate 단계 — companion 표시 상태(작업/집중) 판정에 사용.
-enum BurnTier: Sendable {
-    case idle, normal, fast, blazing
-}
+// BurnTier moved to CompanionModel.swift (cross-platform) so the Windows tray can drive companion.
 
 @MainActor
 @Observable
@@ -546,13 +544,25 @@ final class UsageStore {
 
     // MARK: 생명주기
 
-    init(providers: [any UsageProvider] = [
-        LocalClaudeProvider(), LocalCodexProvider(), LocalGeminiProvider(),
-        LocalAntigravityProvider(), LocalOpenCodeProvider(), LocalHermesProvider(),
-        LocalCursorProvider(), LocalGrokProvider(), LocalCopilotProvider(), LocalKiroProvider(),
-        LocalPiProvider(),
-        LocalOmpProvider(), LocalAsideProvider(),
-    ],
+    /// The built-in provider set. OpenCode/Hermes/Cursor/Copilot/Kiro/Aside read local SQLite DBs,
+    /// so they're only present where a sqlite module imports (macOS `SQLite3`, Windows vendored
+    /// `CSQLite`) — a `#if` inside a default-argument array literal isn't valid, hence this helper.
+    /// (Keep general aggregation provider-agnostic; see CLAUDE.md 확장 규약.)
+    static func defaultProviders() -> [any UsageProvider] {
+        var list: [any UsageProvider] = [
+            LocalClaudeProvider(), LocalCodexProvider(), LocalGeminiProvider(),
+            LocalAntigravityProvider(), LocalGrokProvider(), LocalPiProvider(), LocalOmpProvider(),
+        ]
+        #if canImport(SQLite3) || canImport(CSQLite)
+        list.append(contentsOf: [
+            LocalOpenCodeProvider(), LocalHermesProvider(), LocalCursorProvider(),
+            LocalCopilotProvider(), LocalKiroProvider(), LocalAsideProvider(),
+        ])
+        #endif
+        return list
+    }
+
+    init(providers: [any UsageProvider] = UsageStore.defaultProviders(),
          // 세션 키 우선, 없거나 죽었으면 기존 Keychain/파일 OAuth 경로. 두 인자는 같은
          // SessionKeyLimitsProvider 인스턴스를 봐야 한다 — 설정 화면이 고른 조직을 조회 경로가 써야 하므로.
          claudeLimitsProvider: any ClaudeLimitsProviding = ChainedLimitsProvider(
@@ -1321,3 +1331,4 @@ final class UsageStore {
         }
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import SwiftUI
 
@@ -1045,3 +1046,4 @@ struct LimitProgressBar: View {
             .controlSize(.small)
     }
 }
+#endif

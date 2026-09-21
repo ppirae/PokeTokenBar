@@ -1,3 +1,4 @@
+#if os(macOS)   // macOS-only: exercises AppKit/SwiftUI/companion/store types
 import XCTest
 @testable import PokeTokenBar
 
@@ -648,4 +649,4 @@ final class OAuthCredentialDataTests: XCTestCase {
         XCTAssertEqual(sorted, ["real@work.com", "@bot", "service@", "unknown"])
     }
 }
-
+#endif

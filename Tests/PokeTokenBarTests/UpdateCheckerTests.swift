@@ -1,3 +1,4 @@
+#if os(macOS)   // macOS-only: exercises AppKit/SwiftUI/companion/store types
 import XCTest
 @testable import PokeTokenBar
 
@@ -46,3 +47,4 @@ final class UpdateCheckerTests: XCTestCase {
         XCTAssertTrue(script.contains("open \"$2\""), "must open bundlePath via $2 positional arg")
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -817,3 +818,4 @@ struct SettingsView: View {
         alert.runModal()
     }
 }
+#endif

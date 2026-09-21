@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 
 func rarityColor(_ r: Rarity?) -> Color {
@@ -172,6 +173,9 @@ struct SpriteView: View {
             .frame(width: fit.width, height: fit.height)
             .frame(width: size, height: size)
     }
+
+    /// 프레임 지속(초) = max(원본 delay, 하한). 순수·테스트용 — fps 상한 회귀 가드.
+    static func frameDelay(base: TimeInterval, floor: TimeInterval) -> TimeInterval { max(base, floor) }
 
     var body: some View {
         Group {
@@ -1401,3 +1405,4 @@ private struct DexEntryRow: View {
         }
     }
 }
+#endif

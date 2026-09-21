@@ -1,3 +1,6 @@
+// AppKit-only: the floating pet rides an NSPanel. Windows has no equivalent surface here, so the
+// whole file compiles out there (the tray icon carries the companion instead).
+#if os(macOS)
 import AppKit
 import SwiftUI
 
@@ -519,3 +522,4 @@ private struct SpeechBubbleView: View {
         .padding(.bottom, 6)
     }
 }
+#endif
