@@ -59,7 +59,7 @@ enum WindowsTray {
     nonisolated(unsafe) private static var emojiIcons: [String: HICON] = [:]   // emoji → color-image HICON (GDI can't draw color emoji)
     nonisolated(unsafe) private static var evoIcons: [Int: HICON] = [:]   // evo-line speciesID → sprite HICON (cache)
     nonisolated(unsafe) private static var selectedHomeProvider = 0   // 0=Claude 1=Codex 2=Gemini 3=OpenCode 4=Hermes (Home tabs)
-    nonisolated(unsafe) private static var openDropdown = 0   // Settings: 0=none, 1=language, 2=interval (expanded inline)
+    nonisolated(unsafe) private static var openDropdown = 0   // Settings: 0=none, 1=language, 2=interval, 3=growth difficulty (expanded inline)
     nonisolated(unsafe) private static var settingsScroll: Int32 = 0   // Settings tab mouse-wheel scroll (px)
     nonisolated(unsafe) static var settingsContentH: Int32 = 0   // total Settings content height (scroll clamp)
     nonisolated(unsafe) private static var uiLang = "en"                  // current UI language for L()
@@ -1079,7 +1079,8 @@ enum WindowsTray {
 
         // ===== General =====
         settingsLabel(hdc, y, L("일반", "General", "一般")); y += 24
-        let genH = 8 + rowH * 3 + (openDropdown == 1 ? optH * 3 : 0) + (openDropdown == 2 ? optH * 5 : 0)
+        let genH = 8 + rowH * 4 + (openDropdown == 1 ? optH * 3 : 0) + (openDropdown == 2 ? optH * 5 : 0)
+            + (openDropdown == 3 ? optH * Int32(difficultyPresets.count) : 0)
         drawCard(hdc, y, genH)
         var ry = y + 4
         let langName = disp.languageCode == "ko" ? "한국어" : (disp.languageCode == "ja" ? "日本語" : "English")
@@ -1094,6 +1095,16 @@ enum WindowsTray {
         if openDropdown == 2 {
             for (i, p) in [0, 60, 120, 300, 900].enumerated() {
                 drawOptionRow(hdc, ry, intervalLabel(p), selected: sec == p, action: 70 + i); ry += optH
+            }
+        }
+        // 성장 난이도 — 부화/진화 임계를 배율로 스케일한다(PokemonBalance.scaled). macOS 는 설정의
+        // 슬라이더로 같은 `growthDifficulty` 를 쓴다. 여기선 프리셋 드롭다운으로 같은 값을 고른다.
+        let growth = d.object(forKey: "growthDifficulty") as? Double ?? PokemonBalance.defaultDifficulty
+        drawDropdownHeader(hdc, ry, L("성장 난이도", "Growth difficulty", "成長難易度"),
+                           value: difficultyLabel(growth), open: openDropdown == 3, action: 62); ry += rowH
+        if openDropdown == 3 {
+            for (i, p) in difficultyPresets.enumerated() {
+                drawOptionRow(hdc, ry, difficultyLabel(p), selected: abs(growth - p) < 1e-9, action: 80 + i); ry += optH
             }
         }
         drawSwitchRow(hdc, ry, L("로그인 시 자동 시작", "Launch at login", "ログイン時に起動"), sub: nil, on: WindowsAutostart.isEnabled(), action: 53)
@@ -1244,10 +1255,40 @@ enum WindowsTray {
         if sec > 0 { _ = SetTimer(sinkHwnd, timerID, UINT(sec * 1000), nil) }
     }
 
-    /// Expand/collapse a Settings dropdown (1=language, 2=interval); clicking the open one closes it.
+    /// Expand/collapse a Settings dropdown (1=language, 2=interval, 3=growth difficulty); clicking the open one closes it.
     private static func toggleDropdown(_ which: Int) {
         openDropdown = (openDropdown == which) ? 0 : which
         if let popupHwnd { InvalidateRect(popupHwnd, nil, true) }
+    }
+
+    /// Growth-difficulty presets — the multiplier applied to every hatch/evolve threshold.
+    /// <1 hatches/evolves sooner, >1 later; 1.0 is upstream's shipped balance. Values must stay
+    /// inside `PokemonBalance.difficultyRange` (0.1...2.0) or `clampDifficulty` silently pulls them in.
+    private static let difficultyPresets: [Double] = [0.25, 0.5, 1.0, 1.5, 2.0]
+
+    private static func difficultyLabel(_ v: Double) -> String {
+        switch v {
+        case 0.25: return L("아주 쉬움", "Very easy", "とても簡単")
+        case 0.5:  return L("쉬움", "Easy", "簡単")
+        case 1.0:  return L("보통", "Normal", "普通")
+        case 1.5:  return L("어려움", "Hard", "難しい")
+        case 2.0:  return L("아주 어려움", "Very hard", "とても難しい")
+        default:   return String(format: "×%.2f", v)
+        }
+    }
+
+    /// Pick a growth-difficulty preset and collapse the dropdown. `setGrowthDifficulty` rescales the
+    /// already-banked progress, so switching mid-stage keeps the same *fraction* of the bar filled.
+    private static func selectGrowthDifficulty(_ index: Int) {
+        guard let companion, difficultyPresets.indices.contains(index) else { return }
+        let value = difficultyPresets[index]
+        openDropdown = 0
+        Task {
+            await companion.setGrowthDifficulty(value)
+            let disp = await companion.windowsDisplay
+            lock.withLock { currentDisplay = disp }
+            if let popupHwnd { InvalidateRect(popupHwnd, nil, true) }
+        }
     }
 
     /// Pick a refresh-interval preset (index into [0,60,120,300,900]) and collapse the dropdown.
@@ -1351,7 +1392,9 @@ enum WindowsTray {
             case 57: toggleTip("tipShowLimit")
             case 60: toggleDropdown(1)   // language dropdown
             case 61: toggleDropdown(2)   // interval dropdown
+            case 62: toggleDropdown(3)   // growth-difficulty dropdown
             case 70...74: selectInterval(action - 70)   // interval preset
+            case 80...84: selectGrowthDifficulty(action - 80)   // growth-difficulty preset
             default: doAction(action)
             }
             return
