@@ -41,22 +41,31 @@ struct PTBWindowsCLI {
         // The tray dropdown covers the normal case; this exists because the setting is scriptable
         // (and because it makes "did the value actually persist?" answerable from a terminal).
         if let flagIndex = CommandLine.arguments.firstIndex(of: "--difficulty") {
-            let defaults = UserDefaults.standard
+            // Must go through `CompanionStore.setGrowthDifficulty`, never `UserDefaults` directly:
+            // it rescales already-banked growth so the *fraction* of the bar stays put. Writing the
+            // key raw shrinks the threshold while leaving credits alone, which silently advances
+            // earned progress — exactly what upstream #287 fixed.
+            let store = await CompanionStore()
             let valueIndex = flagIndex + 1
             if valueIndex < CommandLine.arguments.count,
                let requested = Double(CommandLine.arguments[valueIndex]) {
                 let clamped = PokemonBalance.clampDifficulty(requested)
-                defaults.set(clamped, forKey: "growthDifficulty")
-                defaults.synchronize()   // CLI exits immediately; don't rely on a deferred flush
                 if clamped != requested {
                     print("[difficulty] \(requested) clamped to \(clamped) "
                           + "(range \(PokemonBalance.difficultyRange.lowerBound)"
                           + "...\(PokemonBalance.difficultyRange.upperBound))")
                 }
+                await store.setGrowthDifficulty(clamped)
+                UserDefaults.standard.synchronize()   // CLI exits immediately; force the flush
             }
-            let stored = defaults.object(forKey: "growthDifficulty") as? Double
-                ?? PokemonBalance.defaultDifficulty
+            let stored = await store.growthDifficulty
             print("[difficulty] growthDifficulty = \(stored)")
+            if let stage = await store.state.active {
+                let need = PokemonBalance.scaled(stage.phaseThreshold, by: stored)
+                let pct = need > 0 ? Double(stage.usedAtStage) / Double(need) * 100 : 0
+                print(String(format: "  this stage: %d / %d tokens (%.1f%%)",
+                             stage.usedAtStage, need, pct))
+            }
             print("  egg hatch:  \(PokemonBalance.scaled(PokemonBalance.eggHatchThreshold, by: stored)) tokens")
             for rarity in [Rarity.common, .uncommon, .rare, .legendary] {
                 let total = PokemonBalance.scaled(PokemonBalance.graduationTotal(rarity), by: stored)
