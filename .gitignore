@@ -32,3 +32,7 @@ docs/*
 
 # Local-only review-gate opt-out (not published)
 .no-review-gate
+
+# Local installer output (20MB setup binaries do not belong in git)
+installer/out/
+out/
