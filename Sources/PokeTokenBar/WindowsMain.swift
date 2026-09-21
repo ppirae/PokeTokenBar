@@ -14,7 +14,8 @@ struct PTBWindowsCLI {
         // modes are opt-in flags (each needs a console); `--report` prints the usage report that used
         // to be the default. The exe links /SUBSYSTEM:WINDOWS so the tray path never flashes a console.
         let args = CommandLine.arguments.dropFirst()
-        let cliFlags: Set<String> = ["--report", "--icon-test", "--update-check", "--autostart-test"]
+        let cliFlags: Set<String> = ["--report", "--icon-test", "--update-check", "--autostart-test",
+                                     "--difficulty"]
         guard args.contains(where: cliFlags.contains) else {
             WindowsTray.run()
             return
@@ -33,6 +34,33 @@ struct PTBWindowsCLI {
                 print("  \(upd.url)")
             } else {
                 print("  up to date (or the check failed / no network)")
+            }
+            return
+        }
+        // `--difficulty [value]` — read or set the growth multiplier without opening the tray.
+        // The tray dropdown covers the normal case; this exists because the setting is scriptable
+        // (and because it makes "did the value actually persist?" answerable from a terminal).
+        if let flagIndex = CommandLine.arguments.firstIndex(of: "--difficulty") {
+            let defaults = UserDefaults.standard
+            let valueIndex = flagIndex + 1
+            if valueIndex < CommandLine.arguments.count,
+               let requested = Double(CommandLine.arguments[valueIndex]) {
+                let clamped = PokemonBalance.clampDifficulty(requested)
+                defaults.set(clamped, forKey: "growthDifficulty")
+                defaults.synchronize()   // CLI exits immediately; don't rely on a deferred flush
+                if clamped != requested {
+                    print("[difficulty] \(requested) clamped to \(clamped) "
+                          + "(range \(PokemonBalance.difficultyRange.lowerBound)"
+                          + "...\(PokemonBalance.difficultyRange.upperBound))")
+                }
+            }
+            let stored = defaults.object(forKey: "growthDifficulty") as? Double
+                ?? PokemonBalance.defaultDifficulty
+            print("[difficulty] growthDifficulty = \(stored)")
+            print("  egg hatch:  \(PokemonBalance.scaled(PokemonBalance.eggHatchThreshold, by: stored)) tokens")
+            for rarity in [Rarity.common, .uncommon, .rare, .legendary] {
+                let total = PokemonBalance.scaled(PokemonBalance.graduationTotal(rarity), by: stored)
+                print("  graduate \(rarity): \(total) tokens")
             }
             return
         }
