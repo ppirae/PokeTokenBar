@@ -1,5 +1,10 @@
 import Foundation
-import Security
+#if canImport(FoundationNetworking)
+import FoundationNetworking   // URLSession/URLRequest live here on non-Darwin (Windows/Linux)
+#endif
+#if canImport(Security)
+import Security   // Keychain read path below; macOS only.
+#endif
 
 /// Antigravity 공식 한도 조회 추상화 — 실 구현 또는 테스트 스텁 주입.
 public protocol AntigravityLimitsProviding: Sendable {
@@ -251,6 +256,12 @@ actor AntigravityTokenCache {
     private nonisolated static func readKeychain(
         allowKeychainPrompt: Bool
     ) throws -> AntigravityOAuthCredential {
+        #if !os(macOS)
+        // Antigravity stores its OAuth blob in the macOS login Keychain only. Windows has no
+        // equivalent store to read, so the provider reports "no usable credential source" and the
+        // caller falls back exactly as it does when the Keychain is locked.
+        throw LimitsError.credentialUnavailable
+        #else
         if KeychainAccessGate.isDisabled {
             throw LimitsError.keychainAccessDisabled
         }
@@ -277,6 +288,7 @@ actor AntigravityTokenCache {
             throw LimitsError.credentialFormat
         }
         return credential
+        #endif
     }
 
     private nonisolated static func parseCredential(data: Data) -> AntigravityOAuthCredential? {

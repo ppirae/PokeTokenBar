@@ -1,3 +1,4 @@
+#if os(macOS)   // SwiftUI view layer — the Windows tray paints cost text with GDI instead.
 import SwiftUI
 
 @MainActor
@@ -9,3 +10,4 @@ struct UsageCostText: View {
         Text(cost.text(l))
     }
 }
+#endif

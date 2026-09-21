@@ -341,6 +341,17 @@ actor OAuthAccessTokenCache {
 enum OAuthCredentialData {
     static let claudeKeychainService = "Claude Code-credentials"
 
+    /// Keychain attribute key for the account name. `kSecAttrAccount` is a Darwin `CFString` whose
+    /// value is the literal `"acct"`, and that literal is what the returned attribute dictionaries
+    /// actually carry — so the non-Darwin build parses identical rows without the Security framework.
+    #if os(macOS)
+    static let accountAttributeKey = kSecAttrAccount as String
+    #else
+    static let accountAttributeKey = "acct"
+    #endif
+
+    #if os(macOS)
+
     /// 계정 열거용 쿼리 — **데이터를 요청하지 않는다.**
     ///
     /// `kSecMatchLimitAll` 은 `kSecReturnData` 와 함께 쓸 수 없다. macOS 는 그 조합을
@@ -372,6 +383,7 @@ enum OAuthCredentialData {
         if !allowKeychainPrompt { KeychainNoUIQuery.apply(to: &query) }
         return query
     }
+    #endif
 
     /// 속성 조회 결과에서 `acct` 목록을 뽑는다(순서 유지, 중복 제거, 공백 트림).
     static func accountNames(from item: Any?) -> [String] {
@@ -381,7 +393,7 @@ enum OAuthCredentialData {
         else { return [] }
         var seen = Set<String>()
         return rows.compactMap {
-            ($0[kSecAttrAccount as String] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ($0[accountAttributeKey] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         }.filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 

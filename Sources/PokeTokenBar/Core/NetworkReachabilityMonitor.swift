@@ -1,4 +1,5 @@
 import Foundation
+#if canImport(Network)
 import Network
 
 /// 네트워크 연결 상태 모니터 — 오프라인에서 온라인으로 복구되는 순간을 감지해 자동 갱신을 트리거한다.
@@ -85,3 +86,16 @@ final class NetworkReachabilityMonitor: @unchecked Sendable {
         return true
     }
 }
+#else
+/// Windows Swift ships no `Network` module (`NWPathMonitor`). The reconnect nudge only *accelerates*
+/// a refresh that the periodic timer performs anyway, so the stub never fires and `UsageStore` keeps
+/// one provider-agnostic code path (CLAUDE.md 확장 규약) instead of a platform branch at the call site.
+final class NetworkReachabilityMonitor: @unchecked Sendable {
+    var onReconnected: (@Sendable () -> Void)?
+
+    init(cooldown: TimeInterval = 5.0, clock: @escaping @Sendable () -> Date = { Date() }) {}
+
+    func start() {}
+    func stop() {}
+}
+#endif

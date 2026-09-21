@@ -1,3 +1,4 @@
+#if os(macOS)   // SwiftUI view layer — the Windows tray paints names with GDI instead.
 import SwiftUI
 
 struct PokemonNameItem: Hashable, Sendable {
@@ -81,3 +82,4 @@ struct PokemonNameLabel: View {
             }
     }
 }
+#endif

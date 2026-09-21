@@ -1,3 +1,6 @@
+// AppKit + sysctl(KERN_PROC) — macOS only. Windows enforces single-instance with a named mutex
+// instead (`Local\PokeTokenBar-SingleInstance`, see WindowsTray), so this file compiles out there.
+#if os(macOS)
 import AppKit
 import Darwin
 
@@ -65,3 +68,4 @@ enum SingleInstance {
         return shouldYield(myStartTime: processStartTime(me), otherStartTimes: others)
     }
 }
+#endif

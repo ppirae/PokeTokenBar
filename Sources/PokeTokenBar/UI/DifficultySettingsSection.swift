@@ -1,3 +1,6 @@
+// SwiftUI Settings section — macOS only. The Windows tray draws its own difficulty dropdown
+// (WindowsTray.paintSettings) against the same `growthDifficulty` key.
+#if os(macOS)
 import SwiftUI
 
 /// Local editing state. Discarding Settings discards this value without touching the store.
@@ -70,3 +73,4 @@ struct DifficultySettingsSection: View {
         .padding(.horizontal, 12).padding(.vertical, 8).frame(minHeight: 38)
     }
 }
+#endif

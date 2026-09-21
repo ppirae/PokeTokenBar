@@ -14,8 +14,12 @@ param(
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
-$exe = Join-Path $root ".build\x86_64-unknown-windows-msvc\release\PokeTokenBar.exe"
-if (-not (Test-Path $exe)) { throw "Release exe not found - run 'swift build -c release' first: $exe" }
+# Swift 6.4's build system emits .build\out\Products\Release-windows-x86_64\; older toolchains used
+# .build\x86_64-unknown-windows-msvc\release\. Take the newest release-flavoured exe under .build.
+$exe = Get-ChildItem (Join-Path $root ".build") -Recurse -Filter PokeTokenBar.exe -ErrorAction SilentlyContinue |
+  Where-Object { $_.FullName -match '[\\/](release|Release-windows-x86_64)[\\/]' } |
+  Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+if (-not $exe) { throw "Release exe not found - run 'swift build -c release' first (looked under $root\.build)" }
 
 # Guard: the built exe's baked version MUST match -Version. Forgetting `swift build -c release` after
 # bumping the version silently ships a stale exe (e.g. Setup-2.4.5.13 containing a 2.4.5.12 binary =>

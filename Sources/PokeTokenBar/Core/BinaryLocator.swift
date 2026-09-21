@@ -116,6 +116,12 @@ enum BinaryLocator {
         }
         return nil
     }
+
+    /// macOS spawns a login shell here because a GUI app there inherits none of `~/.zshrc`.
+    /// Windows has no such gap — user/system variables set in the registry are already in the
+    /// process environment, which `UsageEnvironment.resolve` reads first. So there is nothing
+    /// left to look up and an empty dictionary is the correct answer, not a missing capability.
+    static func shellEnvironmentValues(_ names: [String]) -> [String: String] { [:] }
 }
 #elseif os(macOS)
 import Foundation

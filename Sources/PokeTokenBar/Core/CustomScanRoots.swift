@@ -1,5 +1,22 @@
-import Darwin
+#if canImport(Darwin)
+import Darwin   // fnmatch(3) — see globMatches
+#endif
 import Foundation
+
+/// Glob one path segment against one directory entry.
+///
+/// `fnmatch(3)` is POSIX-only. The only caller sits behind an absolute-POSIX-path guard
+/// (`absolute.hasPrefix("/")`), which no Windows root (`C:\...`) satisfies, so the non-Darwin
+/// branch is unreachable today and returns false rather than shipping a half-correct glob engine.
+/// ponytail: if Windows roots ever become globbable, implement real matching here (PathMatchSpecW)
+/// — a silent `false` would otherwise drop every wildcard root without a word.
+private func globMatches(_ pattern: String, _ name: String) -> Bool {
+    #if canImport(Darwin)
+    return fnmatch(pattern, name, 0) == 0
+    #else
+    return false
+    #endif
+}
 
 /// Per-provider extra scan folders from Settings (#177).
 ///
@@ -40,7 +57,7 @@ enum CustomScanRoots {
                         guard let names = try? fm.contentsOfDirectory(atPath: base.isEmpty ? "/" : base)
                         else { continue }
                         next.append(contentsOf: names.sorted()
-                            .filter { fnmatch(segment, $0, 0) == 0 }
+                            .filter { globMatches(segment, $0) }
                             .map { base + "/" + $0 })
                     }
                     paths = next

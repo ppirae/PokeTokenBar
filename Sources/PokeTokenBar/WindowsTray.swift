@@ -174,11 +174,19 @@ enum WindowsTray {
         let hermes = Self.hermesEntries(since: monthStart)
         let all = claude + codex + gemini + opencode + hermes
         let todayKey = LocalUsageReader.todayKey()
-        let todayTotal = LocalUsageReader.daily(entries: all, localDay: todayKey)?.totalTokens ?? 0
+        // The ledger keys today's tokens per provider: a provider **absent** from the map means
+        // "no confirmed data for today", which the store treats differently from a confirmed zero.
+        // `daily` returns nil exactly in that absent case, so compactMapValues encodes it for free.
+        let todayByProvider: [String: Int] = [
+            "claude_code": claude, "codex": codex, "gemini": gemini,
+            "opencode": opencode, "hermes": hermes,
+        ].compactMapValues { LocalUsageReader.daily(entries: $0, localDay: todayKey)?.totalTokens }
+        let todayTotal = todayByProvider.values.reduce(0, +)
         let monthTotal = LocalUsageReader.period(entries: all, periodKey: "m",
             fromDay: fmt.string(from: monthStart), toDay: fmt.string(from: now)).totalTokens
 
-        await companion.update(todayTokens: todayTotal, todayDate: todayKey, monthTotal: monthTotal,
+        await companion.update(todayTokensByProvider: todayByProvider, todayDate: todayKey,
+                               monthTotal: monthTotal,
                                burnTier: todayTotal > 0 ? .normal : .idle, limitWarning: false,
                                hasUsageData: !all.isEmpty)
         let disp = await companion.windowsDisplay   // Sendable snapshot (single actor hop)
@@ -1532,7 +1540,9 @@ enum WindowsTray {
             case 2: _ = await companion.useMint()
             case 3: _ = await companion.buyRareCandy()
             case 4: _ = await companion.buy(.shinyCharm)
-            case 5: _ = await companion.buyFreshEgg()
+            // 5/6/7 = the three shop egg tiers, in `FreshEgg.shopTiers` order (see shopCard).
+            case 5..<(5 + FreshEgg.shopTiers.count):
+                _ = await companion.buyEgg(FreshEgg.shopTiers[id - 5])
             case 20: _ = await companion.buy(.mint)
             default: break
             }
@@ -1750,11 +1760,14 @@ extension CompanionStore {
                     ownedText: (!kind.isPassive && owned > 0) ? loc.ownedCount(owned) : "",
                     button: ownedPassive ? loc.ownedAlready : loc.buy,
                     enabled: canBuy(kind), action: action)
-            case .freshEgg:
+            case .egg(let tier):
+                // Eggs are tiered upstream (no guarantee / uncommon+ / rare+). The tray's action IDs
+                // are flat ints, so the tier's index in `shopTiers` picks the action: 5, 6, 7.
+                let tierIndex = FreshEgg.shopTiers.firstIndex(of: tier) ?? 0
                 return ShopCardEntry(
-                    icon: "egg", emoji: "🥚", name: loc.freshEggName, desc: loc.freshEggDescription,
-                    priceText: price(FreshEgg.price), ownedText: "",
-                    button: loc.buy, enabled: canBuyFreshEgg, action: 5)
+                    icon: "egg", emoji: "🥚", name: loc.eggName(tier), desc: loc.eggDescription(tier),
+                    priceText: price(FreshEgg.price(guaranteeing: tier)), ownedText: "",
+                    button: loc.buy, enabled: canBuyEgg(tier), action: 5 + tierIndex)
             }
         }
         let shop: [ShopCardEntry] = shopEntries.map(shopCard)
@@ -1780,7 +1793,19 @@ extension CompanionStore {
                         name: dexStoredChainNames(e)?[e.finalID] ?? "#\(e.finalID)",
                         rarity: String(describing: e.rarity), isShiny: e.isShiny)
             },
-            lineNodes: hasActive ? lineNodes.map { EvoThumb(id: $0.id, kind: $0.kind) } : [],
+            lineNodes: hasActive ? lineNodes.map { item in
+                // `EvoLineItem` split into content (species vs. not-yet-revealed) + state upstream.
+                // The tray keeps its flat (id, kind) thumb: id 0 means "no sprite to draw".
+                let id: Int
+                if case .species(let speciesID) = item.content { id = speciesID } else { id = 0 }
+                let kind: String
+                switch item.state {
+                case .current: kind = "cur"
+                case .done:    kind = "done"
+                case .future:  kind = "future"
+                }
+                return EvoThumb(id: id, kind: kind)
+            } : [],
             languageCode: language.rawValue,
             progress: isEgg ? eggProgress : progress,
             shopEntries: shop, bagEntries: bag,

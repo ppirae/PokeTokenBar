@@ -697,6 +697,7 @@ enum LocalAdditionalUsageReader {
         afterRowIDByPath: [String: Int64]? = nil,
         roots: [URL]? = nil
     ) async -> CursorLoadResult {
+        #if canImport(CryptoKit)
         let api = await CursorUsageAPI.fetchEntries(modifiedSince: modifiedSince)
         return cursorEntriesSync(
             modifiedSince: modifiedSince,
@@ -705,6 +706,16 @@ enum LocalAdditionalUsageReader {
             roots: roots,
             apiEntries: api.entries,
             apiIsAuthoritative: api.isAuthoritative)
+        #else
+        // `CursorUsageAPI` signs its dashboard request with CryptoKit (Darwin-only), so Windows
+        // reports the local SQLite rows alone — the same path macOS takes when the API is down.
+        return cursorEntriesSync(
+            modifiedSince: modifiedSince,
+            afterRowID: afterRowID,
+            afterRowIDByPath: afterRowIDByPath,
+            roots: roots,
+            apiEntries: [])
+        #endif
     }
 
     /// Test hook for the dashboard/API path without network I/O.

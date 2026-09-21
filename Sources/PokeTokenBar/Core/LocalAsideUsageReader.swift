@@ -1,5 +1,11 @@
 import Foundation
+// macOS links its system `SQLite3`; Windows Swift ships none, so the vendored amalgamation
+// (Sources/CSQLite) supplies the identical sqlite3_* C API. One of the two always resolves.
+#if canImport(SQLite3)
 import SQLite3
+#elseif canImport(CSQLite)
+import CSQLite
+#endif
 
 /// Aside persists mutable turn aggregates, not append-only usage events, and `ON DELETE
 /// CASCADE` removes a session's turns outright when the user deletes the session. The

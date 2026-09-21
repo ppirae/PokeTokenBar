@@ -1,3 +1,6 @@
+// The request signature hashes the session token with CryptoKit, which is Darwin-only. Windows
+// falls back to the local SQLite rows (see `cursorEntriesAsync`), so the whole file compiles out.
+#if canImport(CryptoKit)
 import CryptoKit
 import Foundation
 
@@ -462,3 +465,4 @@ enum CursorUsageAPI {
         return iso.date(from: raw)
     }
 }
+#endif
