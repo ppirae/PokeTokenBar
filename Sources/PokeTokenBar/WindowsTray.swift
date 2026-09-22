@@ -64,6 +64,8 @@ enum WindowsTray {
     nonisolated(unsafe) static var settingsContentH: Int32 = 0   // total Settings content height (scroll clamp)
     nonisolated(unsafe) private static var uiLang = "en"                  // current UI language for L()
     nonisolated(unsafe) private static var dexScroll: Int32 = 0           // dex grid scroll offset (px)
+    nonisolated(unsafe) private static var shopScroll: Int32 = 0          // Shop card list scroll offset (px)
+    nonisolated(unsafe) private static var shopContentH: Int32 = 0        // total Shop card height (scroll clamp)
     private static let dexGridTop: Int32 = 82   // below the tab bar + dex header
     private static let dexCellH: Int32 = 78
     private static let dexCols: Int32 = 4
@@ -1008,9 +1010,26 @@ enum WindowsTray {
         var hr = RECT(left: left + 16, top: hcTop + 68, right: right - 16, bottom: hcTop + 88)
         drawText(disp.shopHint, in: hdc, rect: &hr, format: UINT(DT_LEFT | DT_SINGLELINE))
         SelectObject(hdc, o); DeleteObject(hf)
-        // Item cards.
-        var top = hcTop + hcH + 10
-        for e in disp.shopEntries { drawItemCard(hdc, top: top, e); top += cardH + 10 }
+        // Item cards, scrolling under the pinned wallet header. Three egg tiers plus the items are
+        // taller than the popup, so without this the last cards are simply unreachable.
+        // `drawItemCard` registers its button in `buttonHits` from the same `top`, so offsetting the
+        // draw moves the click targets with it; fully off-screen cards are skipped rather than drawn
+        // so they never leave a clickable region floating over the header.
+        let cardsTop = hcTop + hcH + 10
+        let saved = SaveDC(hdc)
+        IntersectClipRect(hdc, 0, cardsTop, popupWidth, popupHeight)
+        var top = cardsTop - shopScroll
+        for e in disp.shopEntries {
+            if top + cardH > cardsTop, top < popupHeight { drawItemCard(hdc, top: top, e) }
+            top += cardH + 10
+        }
+        RestoreDC(hdc, saved)
+        shopContentH = (top + shopScroll) - cardsTop
+    }
+
+    /// Height of the Shop's scrollable band — the popup below the pinned wallet header.
+    private static func shopVisibleH() -> Int32 {
+        popupHeight - (contentTop + 4 + 92 + 10)
     }
 
     private static func sectionHeader(_ hdc: HDC?, _ text: String) {
@@ -1105,10 +1124,11 @@ enum WindowsTray {
                 drawOptionRow(hdc, ry, intervalLabel(p), selected: sec == p, action: 70 + i); ry += optH
             }
         }
-        // 성장 난이도 — 부화/진화 임계를 배율로 스케일한다(PokemonBalance.scaled). macOS 는 설정의
-        // 슬라이더로 같은 `growthDifficulty` 를 쓴다. 여기선 프리셋 드롭다운으로 같은 값을 고른다.
+        // 난이도 — 부화/진화 임계(growthDifficulty)와 상점 가격(shopDifficulty)에 같은 배율을 건다.
+        // macOS 는 둘을 독립 슬라이더로 두지만, 한쪽만 내리면 상점이 상대적으로 그만큼 비싸져
+        // 체감 밸런스가 틀어진다. 트레이에서는 하나의 선택이 둘을 함께 움직이게 한다.
         let growth = d.object(forKey: "growthDifficulty") as? Double ?? PokemonBalance.defaultDifficulty
-        drawDropdownHeader(hdc, ry, L("성장 난이도", "Growth difficulty", "成長難易度"),
+        drawDropdownHeader(hdc, ry, L("난이도", "Difficulty", "難易度"),
                            value: difficultyLabel(growth), open: openDropdown == 3, action: 62); ry += rowH
         if openDropdown == 3 {
             for (i, p) in difficultyPresets.enumerated() {
@@ -1285,14 +1305,19 @@ enum WindowsTray {
         }
     }
 
-    /// Pick a growth-difficulty preset and collapse the dropdown. `setGrowthDifficulty` rescales the
-    /// already-banked progress, so switching mid-stage keeps the same *fraction* of the bar filled.
-    private static func selectGrowthDifficulty(_ index: Int) {
+    /// Pick a difficulty preset and collapse the dropdown.
+    ///
+    /// Both multipliers move together: thresholds shrink and prices shrink by the same factor, so
+    /// an item stays worth the same *share* of a graduation at every setting. `setGrowthDifficulty`
+    /// rescales already-banked progress, so switching mid-stage keeps the bar's fraction filled;
+    /// prices are pure reads, so `setShopDifficulty` has no stored progress to reprice.
+    private static func selectDifficulty(_ index: Int) {
         guard let companion, difficultyPresets.indices.contains(index) else { return }
         let value = difficultyPresets[index]
         openDropdown = 0
         Task {
             await companion.setGrowthDifficulty(value)
+            await companion.setShopDifficulty(value)
             let disp = await companion.windowsDisplay
             lock.withLock { currentDisplay = disp }
             if let popupHwnd { InvalidateRect(popupHwnd, nil, true) }
@@ -1381,6 +1406,7 @@ enum WindowsTray {
             switch action {
             case 100...104:   // tab switch (Home/Bag/Shop/Dex/Settings)
                 popupView = action - 100
+                if popupView == 1 { shopScroll = 0 }
                 if popupView == 3 { dexScroll = 0 }
                 if popupView == 4 { settingsScroll = 0; openDropdown = 0 }
                 if let popupHwnd { InvalidateRect(popupHwnd, nil, true) }
@@ -1400,9 +1426,9 @@ enum WindowsTray {
             case 57: toggleTip("tipShowLimit")
             case 60: toggleDropdown(1)   // language dropdown
             case 61: toggleDropdown(2)   // interval dropdown
-            case 62: toggleDropdown(3)   // growth-difficulty dropdown
+            case 62: toggleDropdown(3)   // difficulty dropdown
             case 70...74: selectInterval(action - 70)   // interval preset
-            case 80...84: selectGrowthDifficulty(action - 80)   // growth-difficulty preset
+            case 80...84: selectDifficulty(action - 80)   // difficulty preset (growth + shop)
             default: doAction(action)
             }
             return
@@ -1619,7 +1645,11 @@ enum WindowsTray {
             return 0
         case UINT(WM_MOUSEWHEEL):
             let delta = Int32(Int16(truncatingIfNeeded: wParam >> 16))   // ±120 per notch
-            if WindowsTray.popupView == 3, let h = WindowsTray.popupHwnd {   // dex view
+            if WindowsTray.popupView == 1, let h = WindowsTray.popupHwnd {   // shop
+                let maxS = max(0, WindowsTray.shopContentH - WindowsTray.shopVisibleH())
+                WindowsTray.shopScroll = min(maxS, max(0, WindowsTray.shopScroll - delta / 120 * 48))
+                InvalidateRect(h, nil, true)
+            } else if WindowsTray.popupView == 3, let h = WindowsTray.popupHwnd {   // dex view
                 let count = WindowsTray.lock.withLock { WindowsTray.currentDisplay.dex.count }
                 let maxS = WindowsTray.dexMaxScroll(count)
                 WindowsTray.dexScroll = min(maxS, max(0, WindowsTray.dexScroll - delta / 120 * 52))

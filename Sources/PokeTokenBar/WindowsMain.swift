@@ -55,11 +55,14 @@ struct PTBWindowsCLI {
                           + "(range \(PokemonBalance.difficultyRange.lowerBound)"
                           + "...\(PokemonBalance.difficultyRange.upperBound))")
                 }
+                // Growth and shop move together — halving only the thresholds leaves every price
+                // worth twice as many graduations, which reads as "the shop got expensive".
                 await store.setGrowthDifficulty(clamped)
+                await store.setShopDifficulty(clamped)
                 UserDefaults.standard.synchronize()   // CLI exits immediately; force the flush
             }
             let stored = await store.growthDifficulty
-            print("[difficulty] growthDifficulty = \(stored)")
+            print("[difficulty] growth = \(stored), shop = \(await store.shopDifficulty)")
             if let stage = await store.state.active {
                 let need = PokemonBalance.scaled(stage.phaseThreshold, by: stored)
                 let pct = need > 0 ? Double(stage.usedAtStage) / Double(need) * 100 : 0
@@ -70,6 +73,10 @@ struct PTBWindowsCLI {
             for rarity in [Rarity.common, .uncommon, .rare, .legendary] {
                 let total = PokemonBalance.scaled(PokemonBalance.graduationTotal(rarity), by: stored)
                 print("  graduate \(rarity): \(total) tokens")
+            }
+            print("  shop:")
+            for entry in await store.shopEntries {
+                print("    \(entry): \(await store.price(of: entry)) tokens")
             }
             return
         }
