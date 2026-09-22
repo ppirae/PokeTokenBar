@@ -918,10 +918,13 @@ struct L {
         case .shinyCharm: return t("이로치 부적", "Shiny Charm", "ひかるおまもり", "Amuleto Iris", "Charme Chroma", "Amuleto Shiny", "Schillerpin")
         }
     }
-    func itemDescription(_ kind: ItemKind) -> String {
+    /// `candyXP` 는 난이도 배율이 걸린 실제 지급량(`CompanionStore.rareCandyXP`)을 받는다. 기본값은
+    /// 배율 1.0 의 상수라 스토어가 없는 호출부도 컴파일되지만, 스토어가 있으면 **반드시 넘겨야** 한다 —
+    /// 안 넘기면 설명은 100M 이라 적고 실제로는 그보다 적게 주는 표시/실제 불일치가 된다.
+    func itemDescription(_ kind: ItemKind, candyXP: Int = RareCandy.xp) -> String {
         switch kind {
         case .rareCandy:
-            let xp = TokenFormatter.compact(RareCandy.xp)   // 상수에서 파생(하드코딩 드리프트 방지)
+            let xp = TokenFormatter.compact(candyXP)
             return t("현재 포켓몬의 경험치를 \(xp) 올려줘요.",
                      "Raises your Pokémon's EXP by \(xp).",
                      "ポケモンの経験値を\(xp)上げます。",

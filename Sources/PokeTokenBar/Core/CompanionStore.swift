@@ -79,8 +79,12 @@ final class CompanionStore {
     // (설정창의 다른 슬라이더와 같은 자리), 세이브에 넣으면 남의 세이브를 불러올 때 내 난이도가 조용히
     // 바뀌며 SaveTransfer 의 관대 디코딩·검증까지 새 수치 필드를 떠안는다.
 
-    /// 성장 배율 — 알 부화 임계 + 진화/졸업 임계에 곱한다. 낮을수록 빨리 자란다.
-    /// 사탕 XP(RareCandy.xp)는 스케일하지 않는다 — 함께 곱하면 서로 상쇄돼 사탕만 난이도를 안 탄다.
+    /// 성장 배율 — 알 부화 임계 + 진화/졸업 임계 + 사탕 XP 에 곱한다. 낮을수록 빨리 자란다.
+    ///
+    /// 사탕 XP 도 함께 스케일한다(`rareCandyXP`). 임계만 줄이면 고정 XP 가 단계에서 차지하는 비중이
+    /// 배율에 반비례해 커지고, 가격은 shopDifficulty 를 타므로 배율이 0.2 아래에서는 **가격 < XP** 가
+    /// 되어 "무료 획득이 항상 이득"이라는 사탕의 전제가 뒤집힌다(사탕이 순수 차익거래가 된다).
+    /// 둘을 같이 곱하면 사탕은 어떤 배율에서도 한 단계의 같은 비중(16%)·값어치의 5배 가격을 유지한다.
     private(set) var growthDifficulty: Double
     /// 상점 배율 — 아이템·알 가격에 곱한다. 낮을수록 싸다.
     private(set) var shopDifficulty: Double
@@ -177,6 +181,10 @@ final class CompanionStore {
 
     /// 난이도를 반영한 단계 임계. **`PokemonBalance.phaseThreshold` 를 직접 부르지 않는다** —
     /// 배율을 빠뜨린 호출부가 생기면 그 경로만 조용히 기본 난이도로 돌아간다.
+    /// 사탕 1개가 주는 성장량 — 임계와 같은 배율을 타므로 한 단계 대비 비중이 배율과 무관하게 일정하다.
+    /// 표시(설명·가방 배지)와 실제 지급이 갈리지 않게 **모든 소비자가 이 값을 쓴다**.
+    var rareCandyXP: Int { PokemonBalance.scaled(RareCandy.xp, by: growthDifficulty) }
+
     private func stageThreshold(for mon: MonState) -> Int {
         PokemonBalance.scaled(mon.phaseThreshold, by: growthDifficulty)
     }
@@ -799,7 +807,8 @@ final class CompanionStore {
     /// 사탕 사용 결과 — UI 피드백 분기용.
     enum CandyUseResult: Equatable { case evolved, graduated, progressed, unavailable }
 
-    /// 이상한 사탕 1개 사용 — 현재 포켓몬에 +RareCandy.xp. applyUsage 재사용으로 이월·진화·졸업·연출 자동.
+    /// 이상한 사탕 1개 사용 — 현재 포켓몬에 +`rareCandyXP`(난이도 반영). applyUsage 재사용으로
+    /// 이월·진화·졸업·연출 자동.
     /// 사탕 XP 는 usedAtStage(진화 진행)에만 반영 — usedSinceInstall/오늘 토큰(실사용 통계)엔 안 잡힌다.
     @discardableResult
     func useRareCandy() -> CandyUseResult {
@@ -807,9 +816,9 @@ final class CompanionStore {
         state.inventory[ItemKind.rareCandy.rawValue] = rareCandyCount - 1
         let beforeStage = state.active?.stageIndex ?? 0
         // 진화 안 될 때(부분 진행)도 즉시 "+XP" 피드백 — CompanionHeader 가 연출과 별개로 표시.
-        candyFeedbackAmount = RareCandy.xp
+        candyFeedbackAmount = rareCandyXP
         candyFeedbackSeq += 1
-        applyUsage(RareCandy.xp)   // 내부에서 save() 수행(인벤토리 감소 포함 영속)
+        applyUsage(rareCandyXP)   // 내부에서 save() 수행(인벤토리 감소 포함 영속)
         if state.active == nil { return .graduated }
         if state.active!.stageIndex > beforeStage { return .evolved }
         return .progressed

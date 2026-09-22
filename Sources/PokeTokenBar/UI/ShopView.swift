@@ -71,7 +71,7 @@ private struct ShopItemCard: View {
                                 .foregroundStyle(.secondary).monospacedDigit()
                         }
                     }
-                    Text(l.itemDescription(kind))
+                    Text(l.itemDescription(kind, candyXP: store.rareCandyXP))
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }

@@ -1771,7 +1771,10 @@ extension CompanionStore {
     /// Actor-isolated read of every field the tray needs, as one Sendable value.
     var windowsDisplay: CompanionDisplay {
         let loc = l   // cross-platform localized strings (same source as the macOS app → no drift)
-        func price(_ tokens: Int) -> String { "\(loc.shopPriceLabel) \(TokenFormatter.compact(tokens))" }
+        // Formats a price for display. The *value* must come from `price(of:)`, never from the raw
+        // `ItemKind.shopPrice` / `FreshEgg.price` constants — those are the difficulty-1.0 table, so
+        // reading them directly shows a price the purchase does not charge.
+        func priceLabel(_ tokens: Int) -> String { "\(loc.shopPriceLabel) \(TokenFormatter.compact(tokens))" }
         let candyN = rareCandyCount, mintN = itemCount(.mint)
         // Shop list derived from the shared, price-sorted `CompanionStore.shopEntries` — the single
         // source of truth with the macOS ShopView, so item order/content never drifts. A bought
@@ -1785,8 +1788,8 @@ extension CompanionStore {
                 let action = kind == .rareCandy ? 3 : (kind == .mint ? 20 : 4)
                 return ShopCardEntry(
                     icon: kind.spriteName, emoji: kind.fallbackEmoji,
-                    name: loc.itemName(kind), desc: loc.itemDescription(kind),
-                    priceText: price(kind.shopPrice ?? 0),
+                    name: loc.itemName(kind), desc: loc.itemDescription(kind, candyXP: rareCandyXP),
+                    priceText: priceLabel(price(of: entry)),
                     ownedText: (!kind.isPassive && owned > 0) ? loc.ownedCount(owned) : "",
                     button: ownedPassive ? loc.ownedAlready : loc.buy,
                     enabled: canBuy(kind), action: action)
@@ -1796,13 +1799,14 @@ extension CompanionStore {
                 let tierIndex = FreshEgg.shopTiers.firstIndex(of: tier) ?? 0
                 return ShopCardEntry(
                     icon: "egg", emoji: "🥚", name: loc.eggName(tier), desc: loc.eggDescription(tier),
-                    priceText: price(FreshEgg.price(guaranteeing: tier)), ownedText: "",
+                    priceText: priceLabel(price(of: entry)), ownedText: "",
                     button: loc.buy, enabled: canBuyEgg(tier), action: 5 + tierIndex)
             }
         }
         let shop: [ShopCardEntry] = shopEntries.map(shopCard)
         let bag: [ShopCardEntry] = [
-            ShopCardEntry(icon: "rare-candy", emoji: "🍬", name: loc.itemName(.rareCandy), desc: loc.itemDescription(.rareCandy),
+            ShopCardEntry(icon: "rare-candy", emoji: "🍬", name: loc.itemName(.rareCandy),
+                      desc: loc.itemDescription(.rareCandy, candyXP: rareCandyXP),
                       priceText: "", ownedText: loc.ownedCount(candyN), button: loc.use, enabled: canUseRareCandy, action: 1),
             ShopCardEntry(icon: nil, emoji: "🌿", name: loc.itemName(.mint), desc: loc.itemDescription(.mint),
                       priceText: "", ownedText: loc.ownedCount(mintN), button: loc.use, enabled: canUseMint, action: 2),
@@ -1816,8 +1820,8 @@ extension CompanionStore {
             canUseCandy: canUseRareCandy, canUseMint: canUseMint,
             canBuyCandy: canBuyRareCandy, canBuyCharm: canBuy(.shinyCharm), canBuyEgg: canBuyFreshEgg,
             ownsCharm: ownsShinyCharm,
-            candyPrice: ItemKind.rareCandy.shopPrice ?? 0, charmPrice: ItemKind.shinyCharm.shopPrice ?? 0,
-            eggPrice: FreshEgg.price, mintPrice: ItemKind.mint.shopPrice ?? 0, canBuyMint: canBuy(.mint),
+            candyPrice: price(of: .rareCandy) ?? 0, charmPrice: price(of: .shinyCharm) ?? 0,
+            eggPrice: price(of: .egg(nil)), mintPrice: price(of: .mint) ?? 0, canBuyMint: canBuy(.mint),
             dex: dexEntriesSorted.map { e in
                 DexItem(speciesID: e.finalID,
                         name: dexStoredChainNames(e)?[e.finalID] ?? "#\(e.finalID)",

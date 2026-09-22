@@ -59,7 +59,7 @@ private struct ItemCard: View {
                                 .foregroundStyle(.secondary).monospacedDigit()
                         }
                     }
-                    Text(l.itemDescription(kind))
+                    Text(l.itemDescription(kind, candyXP: store.rareCandyXP))
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -83,7 +83,7 @@ private struct ItemCard: View {
     /// 사용 컨트롤 효과 힌트 ("+XP" / "성격 랜덤 변경").
     private func effectHint(_ l: L) -> String {
         switch kind {
-        case .rareCandy: return "+\(TokenFormatter.compact(RareCandy.xp)) XP"
+        case .rareCandy: return "+\(TokenFormatter.compact(store.rareCandyXP)) XP"
         case .mint:      return l.mintEffectHint
         case .shinyCharm: return l.shinyCharmEffectHint
         }
