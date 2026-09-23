@@ -54,7 +54,7 @@ enum WindowsTray {
     nonisolated(unsafe) private static var updateDots = 0     // animated "…" for the update overlay
     nonisolated(unsafe) private static var buttonHits: [(rect: RECT, action: Int)] = []   // popover action buttons
     nonisolated(unsafe) private static var popupView = 0        // 0 = home, 1 = dex, 2 = settings
-    nonisolated(unsafe) private static var dexIcons: [Int: HICON] = [:]   // finalID → sprite HICON (cache)
+    nonisolated(unsafe) private static var dexIcons: [Int: HICON] = [:]   // dex speciesID → sprite HICON (cache)
     nonisolated(unsafe) private static var itemIcons: [String: HICON] = [:]   // item spriteName → HICON (cache)
     nonisolated(unsafe) private static var emojiIcons: [String: HICON] = [:]   // emoji → color-image HICON (GDI can't draw color emoji)
     nonisolated(unsafe) private static var evoIcons: [Int: HICON] = [:]   // evo-line speciesID → sprite HICON (cache)
@@ -64,9 +64,17 @@ enum WindowsTray {
     nonisolated(unsafe) static var settingsContentH: Int32 = 0   // total Settings content height (scroll clamp)
     nonisolated(unsafe) private static var uiLang = "en"                  // current UI language for L()
     nonisolated(unsafe) private static var dexScroll: Int32 = 0           // dex grid scroll offset (px)
+    /// Selected rarity chip in the dex, or nil for "all" (upstream's `selectedRarity`).
+    nonisolated(unsafe) private static var dexRarityFilter: String?
+    /// Rarity order for the tally chips — ascending by value, matching `Rarity.sortRank`.
+    private static let dexRarities = ["common", "uncommon", "rare", "legendary"]
     nonisolated(unsafe) private static var shopScroll: Int32 = 0          // Shop card list scroll offset (px)
     nonisolated(unsafe) private static var shopContentH: Int32 = 0        // total Shop card height (scroll clamp)
-    private static let dexGridTop: Int32 = 82   // below the tab bar + dex header
+    // Tab bar ends at `contentTop` (46), the section header occupies 48…72, and the rarity chips
+    // sit at 78…98 — so the grid starts below all three. Raising this without moving the chips is
+    // what made them paint on top of the header.
+    private static let dexGridTop: Int32 = 106
+    private static let dexChipTop: Int32 = contentTop + 32   // 78
     private static let dexCellH: Int32 = 78
     private static let dexCols: Int32 = 4
     private static let contentTop: Int32 = 46    // below the tab bar
@@ -75,6 +83,15 @@ enum WindowsTray {
     nonisolated(unsafe) private static var stayVisible = false
     // Guards the auto-hide-on-deactivate handler right after opening — see togglePopup().
     nonisolated(unsafe) private static var popupShownAt: Date?
+    /// Did this showing of the popup ever actually become the active window?
+    ///
+    /// Click-away dismissal keys off `WM_ACTIVATE`/`WA_INACTIVE`, but when an elevated window holds
+    /// the foreground, UIPI denies `AttachThreadInput` and the popup never activates at all — so the
+    /// deactivate that arrives is not the user clicking away, it is the popup never having had focus.
+    /// Hiding on it makes the tray icon look dead (the window opens and vanishes in the same frame).
+    /// Only a showing that genuinely activated can be dismissed this way; the rest close via the
+    /// tray icon toggle.
+    nonisolated(unsafe) private static var popupWasActivated = false
     nonisolated(unsafe) private static var lastAlertTier = 0
 
     // MARK: Entry (main thread — Win32 message loop)
@@ -87,14 +104,17 @@ enum WindowsTray {
         instanceMutex = "Local\\PokeTokenBar-SingleInstance".withCString(encodedAs: UTF16.self) {
             CreateMutexW(nil, false, $0)
         }
-        if GetLastError() == DWORD(ERROR_ALREADY_EXISTS) {
-            if let existing = sinkClassName.wide.withUnsafeBufferPointer({
-                FindWindowExW(HWND(bitPattern: -3), nil, $0.baseAddress, nil)   // HWND_MESSAGE parent
-            }) { _ = PostMessageW(existing, showMessage, 0, 0) }
-            return
-        }
-        // CompanionStore is created lazily on CompanionActor in the first refresh (its init is
-        // actor-isolated, so it can't be constructed from this synchronous context).
+        // Capture the mutex result immediately: every later Win32 call (RegisterClassExW
+        // below) overwrites the thread's last-error, so reading it afterwards reports that
+        // call's status instead — the single-instance check would pass and a second tray
+        // icon would appear.
+        let alreadyRunning = GetLastError() == DWORD(ERROR_ALREADY_EXISTS)
+        // Register the sink class *before* the single-instance branch. `FindWindowExW` resolves a
+        // class *name* through the calling process's own class table, so a second instance that
+        // returns before registering never finds the running instance's window: the handoff posts
+        // nothing and the relaunch exits silently, which is exactly how re-opening from the Start
+        // menu came to do nothing at all. Registering first costs one call in the instance that is
+        // about to exit and makes the lookup resolve.
         let hInstance = GetModuleHandleW(nil)
         let sinkClass = sinkClassName.wide
         _ = sinkClass.withUnsafeBufferPointer { p -> Bool in
@@ -105,6 +125,18 @@ enum WindowsTray {
             wc.lpszClassName = p.baseAddress
             return RegisterClassExW(&wc) != 0
         }
+        if alreadyRunning {
+            if let existing = sinkClass.withUnsafeBufferPointer({
+                FindWindowExW(HWND(bitPattern: -3), nil, $0.baseAddress, nil)   // HWND_MESSAGE parent
+            }) {
+                _ = PostMessageW(existing, showMessage, 0, 0)
+            } else {
+                AppLog.write("second instance: running instance's tray sink not found — popover not surfaced")
+            }
+            return
+        }
+        // CompanionStore is created lazily on CompanionActor in the first refresh (its init is
+        // actor-isolated, so it can't be constructed from this synchronous context).
         sinkHwnd = sinkClass.withUnsafeBufferPointer { p in
             CreateWindowExW(0, p.baseAddress, p.baseAddress, 0, 0, 0, 0, 0,
                             HWND(bitPattern: -3), nil, hInstance, nil)
@@ -592,6 +624,7 @@ enum WindowsTray {
         let y = stayVisible ? 40 : wa.bottom - h - 8
         _ = SetWindowPos(popupHwnd, HWND(bitPattern: -1), x, y, popupWidth, h, UINT(SWP_SHOWWINDOW))
         popupShownAt = Date()
+        popupWasActivated = false   // this showing has not been focused yet — see the field's note
         forceForeground(popupHwnd)
         checkForUpdate(minInterval: 0, toast: false)   // opening the popover always re-checks (no toast)
         scheduleRefresh()
@@ -1049,19 +1082,25 @@ enum WindowsTray {
     }
 
     private static func paintDex(_ hdc: HDC?, _ disp: CompanionDisplay) {
-        sectionHeader(hdc, "\(L("도감", "Collection", "図鑑")) (\(disp.dex.count))")
+        sectionHeader(hdc, "\(L("도감", "Pokédex", "図鑑")) (\(disp.dex.count))")
 
         if disp.dex.isEmpty {
             SetTextColor(hdc, rgb(150, 150, 158))
             let f = makeFont(-14, bold: false); let o = SelectObject(hdc, f)
             var r = RECT(left: 24, top: 210, right: popupWidth - 24, bottom: 300)
-            drawText(L("아직 잡은 포켓몬이 없어요.\n최종 진화까지 키우면\n도감에 등록돼요.",
-                       "No Pokemon caught yet.\nRaise your companion to its final form\nto add it to the collection.",
-                       "まだ捕まえたポケモンがいません。\n最終進化まで育てると\n図鑑に登録されます。"),
+            drawText(L("아직 만난 포켓몬이 없어요.\n알이 부화하면\n도감에 등록돼요.",
+                       "No Pokemon yet.\nHatch your egg to start\nfilling the Pokédex.",
+                       "まだ出会ったポケモンがいません。\nタマゴが孵ると\n図鑑に登録されます。"),
                      in: hdc, rect: &r, format: UINT(DT_CENTER | DT_WORDBREAK))
             SelectObject(hdc, o); DeleteObject(f)
             return
         }
+
+        // Rarity tally chips (all · common · uncommon · rare · legendary). Clicking one filters the
+        // grid; the selected chip is filled. Only rarities actually present get a chip, so the row
+        // stays short early on instead of showing four zeroes.
+        drawDexRarityChips(hdc, disp)
+        let items = disp.dex.filter { dexRarityFilter == nil || $0.rarity == dexRarityFilter }
 
         // Grid: 4 cols of 44px sprite + rarity-coloured name, mouse-wheel scrollable. Clipped to the
         // grid area so scrolled rows don't paint over the header.
@@ -1069,13 +1108,20 @@ enum WindowsTray {
         let saved = SaveDC(hdc)
         IntersectClipRect(hdc, 0, dexGridTop - 2, popupWidth, popupHeight)
         let nameFont = makeFont(-11, bold: false); let nOld = SelectObject(hdc, nameFont)
-        for (i, item) in disp.dex.enumerated() {
+        for (i, item) in items.enumerated() {
             let col = Int32(i) % dexCols, row = Int32(i) / dexCols
             let cx = 12 + col * cellW
             let cy = dexGridTop + row * dexCellH - dexScroll
             if cy + dexCellH < dexGridTop || cy > popupHeight { continue }   // off-screen
             if let ic = lock.withLock({ dexIcons[item.speciesID] }) {
                 DrawIconEx(hdc, cx + (cellW - 44) / 2, cy, ic, 44, 44, 0, nil, UINT(DI_NORMAL))
+            }
+            // A thin underline marks the form being raised right now — the Pokédex lists past stages
+            // too, so without it there is no way to tell which cell is the live companion.
+            if item.isRaising {
+                fillRound(hdc, RECT(left: cx + (cellW - 26) / 2, top: cy + 43,
+                                    right: cx + (cellW + 26) / 2, bottom: cy + 45),
+                          1, rgb(92, 152, 232))
             }
             SetTextColor(hdc, rarityColor(item.rarity))
             var nr = RECT(left: cx, top: cy + 46, right: cx + cellW, bottom: cy + 64)
@@ -1084,6 +1130,44 @@ enum WindowsTray {
         }
         SelectObject(hdc, nOld); DeleteObject(nameFont)
         RestoreDC(hdc, saved)
+    }
+
+    /// Rarity filter chips above the dex grid. Actions 90…94 (94 = clear filter).
+    private static func drawDexRarityChips(_ hdc: HDC?, _ disp: CompanionDisplay) {
+        let f = makeFont(-11, bold: true); let o = SelectObject(hdc, f)
+        var x: Int32 = 12
+        let top = dexChipTop, bottom = top + 20
+
+        func chip(_ label: String, _ key: String?, _ action: Int, _ color: COLORREF) {
+            let w = textWidth(hdc, label) + 16
+            guard x + w < popupWidth - 12 else { return }   // ran out of row; drop the rest
+            let r = RECT(left: x, top: top, right: x + w, bottom: bottom)
+            let on = dexRarityFilter == key
+            fillRound(hdc, r, 9, on ? color : rgb(42, 42, 50))
+            SetTextColor(hdc, on ? rgb(20, 20, 24) : color)
+            var tr = r
+            drawText(label, in: hdc, rect: &tr, format: UINT(DT_CENTER | DT_VCENTER | DT_SINGLELINE))
+            buttonHits.append((r, action))
+            x += w + 6
+        }
+
+        chip("\(L("전체", "All", "全部")) \(disp.dex.count)", nil, 94, rgb(200, 200, 210))
+        for (i, rarity) in dexRarities.enumerated() {
+            let count = disp.dex.filter { $0.rarity == rarity }.count
+            guard count > 0 else { continue }
+            chip("\(rarityShortLabel(rarity)) \(count)", rarity, 90 + i, rarityColor(rarity))
+        }
+        SelectObject(hdc, o); DeleteObject(f)
+    }
+
+    private static func rarityShortLabel(_ r: String) -> String {
+        switch r {
+        case "common":    return L("일반", "Common", "ノーマル")
+        case "uncommon":  return L("고급", "Uncommon", "アンコモン")
+        case "rare":      return L("희귀", "Rare", "レア")
+        case "legendary": return L("전설", "Legendary", "伝説")
+        default:          return r
+        }
     }
 
     /// Max scroll offset for the current dex (rows below the fold).
@@ -1407,7 +1491,7 @@ enum WindowsTray {
             case 100...104:   // tab switch (Home/Bag/Shop/Dex/Settings)
                 popupView = action - 100
                 if popupView == 1 { shopScroll = 0 }
-                if popupView == 3 { dexScroll = 0 }
+                if popupView == 3 { dexScroll = 0; dexRarityFilter = nil }
                 if popupView == 4 { settingsScroll = 0; openDropdown = 0 }
                 if let popupHwnd { InvalidateRect(popupHwnd, nil, true) }
             case 10, 11, 12: openDropdown = 0; setLanguage(action)   // pick language + close dropdown
@@ -1429,6 +1513,11 @@ enum WindowsTray {
             case 62: toggleDropdown(3)   // difficulty dropdown
             case 70...74: selectInterval(action - 70)   // interval preset
             case 80...84: selectDifficulty(action - 80)   // difficulty preset (growth + shop)
+            case 90...93, 94:   // dex rarity filter (94 = all). Reset scroll so the shorter list
+                                // does not open mid-way down where the previous filter had scrolled.
+                dexRarityFilter = action == 94 ? nil : dexRarities[action - 90]
+                dexScroll = 0
+                if let popupHwnd { InvalidateRect(popupHwnd, nil, true) }
             default: doAction(action)
             }
             return
@@ -1650,7 +1739,13 @@ enum WindowsTray {
                 WindowsTray.shopScroll = min(maxS, max(0, WindowsTray.shopScroll - delta / 120 * 48))
                 InvalidateRect(h, nil, true)
             } else if WindowsTray.popupView == 3, let h = WindowsTray.popupHwnd {   // dex view
-                let count = WindowsTray.lock.withLock { WindowsTray.currentDisplay.dex.count }
+                // Count the *filtered* rows — clamping against the unfiltered total would let a
+                // narrow filter scroll past its own last row into blank space.
+                let count = WindowsTray.lock.withLock {
+                    WindowsTray.currentDisplay.dex.filter {
+                        WindowsTray.dexRarityFilter == nil || $0.rarity == WindowsTray.dexRarityFilter
+                    }.count
+                }
                 let maxS = WindowsTray.dexMaxScroll(count)
                 WindowsTray.dexScroll = min(maxS, max(0, WindowsTray.dexScroll - delta / 120 * 52))
                 InvalidateRect(h, nil, true)
@@ -1663,7 +1758,9 @@ enum WindowsTray {
             }
             return 0
         case UINT(WM_ACTIVATE):
-            if (wParam & 0xFFFF) == WA_INACTIVE, !WindowsTray.stayVisible, let h = WindowsTray.popupHwnd {
+            if (wParam & 0xFFFF) != WA_INACTIVE { WindowsTray.popupWasActivated = true }
+            if (wParam & 0xFFFF) == WA_INACTIVE, !WindowsTray.stayVisible,
+               WindowsTray.popupWasActivated, let h = WindowsTray.popupHwnd {
                 // forceForeground() can silently fail to borrow foreground rights when the currently
                 // active window belongs to an elevated (higher-integrity) process — AttachThreadInput
                 // is denied by UIPI in that case, so the popup opens without ever truly activating and
@@ -1759,12 +1856,19 @@ struct UsageSnapshot: Sendable {
     var codexCost = 0.0, geminiCost = 0.0, opencodeCost = 0.0, hermesCost = 0.0
 }
 
-/// One caught Pokémon for the Windows dex grid.
+/// One **species** in the Windows dex grid.
+///
+/// Keyed by species, not by catch — upstream #147 split the collection into a species Pokédex and a
+/// catch log, and this is the former. The distinction matters while raising: an evolved companion
+/// occupies one catch-log row (its current form) but two Pokédex cells, so the stage it grew out of
+/// stays on the shelf instead of being overwritten.
 struct DexItem: Sendable {
     var speciesID: Int
     var name: String
     var rarity: String
     var isShiny: Bool
+    /// Is this the companion's *current* form? Earlier stages of the same line are not marked.
+    var isRaising: Bool = false
 }
 
 extension CompanionStore {
@@ -1822,10 +1926,13 @@ extension CompanionStore {
             ownsCharm: ownsShinyCharm,
             candyPrice: price(of: .rareCandy) ?? 0, charmPrice: price(of: .shinyCharm) ?? 0,
             eggPrice: price(of: .egg(nil)), mintPrice: price(of: .mint) ?? 0, canBuyMint: canBuy(.mint),
-            dex: dexEntriesSorted.map { e in
-                DexItem(speciesID: e.finalID,
-                        name: dexStoredChainNames(e)?[e.finalID] ?? "#\(e.finalID)",
-                        rarity: String(describing: e.rarity), isShiny: e.isShiny)
+            // Species Pokédex, not the catch log: `dexSpecies` counts every stage the companion has
+            // actually reached (`pathIDs.prefix(stageIndex + 1)`), so evolving adds a cell instead of
+            // replacing one. The catch log keyed cells by `finalID`, which is why the pre-evolution
+            // form used to vanish the moment it evolved.
+            dex: dexSpecies.map { sp in
+                DexItem(speciesID: sp.id, name: sp.name, rarity: String(describing: sp.rarity),
+                        isShiny: sp.isShiny, isRaising: sp.isRaising)
             },
             lineNodes: hasActive ? lineNodes.map { item in
                 // `EvoLineItem` split into content (species vs. not-yet-revealed) + state upstream.
